@@ -7,7 +7,7 @@ from skimage import color
 import cv2
 from collections import Counter
 
-# --- 1. 色庫與風格 (不變) ---
+# --- 1. 大師色盤與風格 ---
 FULL_PALETTE = {
     "White": (255, 255, 255), "Black": (0, 0, 0), "Light Grey": (159, 161, 158),
     "Dark Grey": (100, 100, 100), "Red": (180, 0, 0), "Blue": (30, 90, 168),
@@ -24,7 +24,7 @@ MASTER_STYLES = {
     "復古 (Retro)": ["Brown", "Tan", "Orange", "Yellow", "Dark Grey", "White"]
 }
 
-# --- 2. 處理函數 (優化邏輯) ---
+# --- 2. 影像處理核心 ---
 
 def super_sharpen(img_np):
     img_cv = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
@@ -67,55 +67,48 @@ def apply_studs(img_np, scale=12):
     res = (scaled.astype(float) / 255.0) * texture * 1.5
     return cv2.cvtColor(np.clip(res * 255, 0, 255).astype(np.uint8), cv2.COLOR_BGR2RGB)
 
-# --- 3. 主介面 ---
+# --- 3. Streamlit 介面 ---
 
 def main():
-    st.set_page_config(layout="wide", page_title="LEGO Studio Custom")
-    st.title("🧱 LEGO® Studio: 手動調教版")
+    st.set_page_config(layout="wide", page_title="LEGO Design Master")
+    st.title("🧱 LEGO® Design Master: 終極修正版")
 
     with st.sidebar:
-        st.header("📏 1. 基礎設定")
+        st.header("📏 尺寸與照片")
         file = st.file_uploader("上傳照片", type=["jpg", "png", "jpeg"])
         c_w, c_h = st.columns(2)
-        grid_w = c_w.number_input("闊度", 8, 400, 64)
-        grid_h = c_h.number_input("長度", 8, 400, 64)
+        grid_w = c_w.number_input("闊度 (Studs)", 8, 400, 64)
+        grid_h = c_h.number_input("長度 (Studs)", 8, 400, 64)
         
         st.divider()
-        st.header("🎨 2. 風格與特效 (預設關閉)")
+        st.header("🎨 風格與銳化")
         style_name = st.selectbox("配色風格", list(MASTER_STYLES.keys()))
-        # --- 這裡將所有 Toggle 設為 False ---
-        use_dither = st.toggle("開啟抖動 (Dithering)", value=False)
-        use_sharp = st.toggle("開啟強效銳化", value=False)
-        auto_zoom = st.checkbox("自動聚焦中心", value=False)
+        use_dither = st.toggle("開啟抖動 (Dithering)", value=True)
+        use_sharp = st.toggle("開啟強效銳化", value=True)
+        auto_zoom = st.checkbox("自動聚焦中心", value=True)
         
         st.divider()
-        st.header("⚙️ 3. 畫面微調")
-        bright = st.slider("亮度", 0.5, 2.0, 1.0)
-        cont = st.slider("對比", 0.5, 2.5, 1.0)
-        show_guide = st.checkbox("展開分區說明書", value=False)
+        bright = st.slider("亮度", 0.5, 2.0, 1.1)
+        cont = st.slider("對比", 0.5, 2.5, 1.4)
+        show_guide = st.checkbox("展開分區說明書 (16x16)", value=False)
 
     if file:
         raw_img = Image.open(file).convert("RGB")
-        
-        # 1. 處理裁切
         if auto_zoom:
             w_o, h_o = raw_img.size
             sz = min(w_o, h_o)
             raw_img = raw_img.crop(((w_o-sz)/2, (h_o-sz)/2, (w_o+sz)/2, (h_o+sz)/2))
 
-        # 2. 基本縮放與調整
         img_p = ImageEnhance.Brightness(raw_img).enhance(bright)
         img_p = ImageEnhance.Contrast(img_p).enhance(cont)
         img_small = img_p.resize((grid_w, grid_h), Image.LANCZOS)
         img_np = np.array(img_small)
         
-        # 3. 銳化
         if use_sharp: img_np = super_sharpen(img_np)
         
         pal_names = MASTER_STYLES[style_name]
         pal_rgbs = np.array([FULL_PALETTE[n] for n in pal_names])
         
-        # 4. 配色與抖動
         if use_dither:
             lego_rgb = apply_dithering(img_np, pal_rgbs)
         else:
@@ -124,36 +117,42 @@ def main():
             _, idxs = KDTree(p_lab).query(img_lab)
             lego_rgb = pal_rgbs[idxs].astype(np.uint8).reshape(grid_h, grid_w, 3)
 
-        # 5. 渲染預覽
+        # 顯示預覽
         m_col, s_col = st.columns([3, 1])
         with m_col:
-            st.subheader("🖼️ 成品預覽")
+            st.subheader("🖼️ 渲染成品預覽")
             st.image(apply_studs(lego_rgb, 12), use_container_width=True)
             
+            # --- 分區修正邏輯 ---
             if show_guide:
                 st.divider()
-                st.subheader("📖 分區圖紙 (16x16)")
+                st.subheader("📖 16x16 比例修正分區圖")
                 rows = (grid_h + 15) // 16
                 cols = (grid_w + 15) // 16
+                
                 for r in range(rows):
+                    st.write(f"第 {r+1} 排區塊")
                     ui_cols = st.columns(4)
                     for c in range(cols):
                         ui_idx = c % 4
                         y_s, y_e = r*16, min((r+1)*16, grid_h)
                         x_s, x_e = c*16, min((c+1)*16, grid_w)
                         block = lego_rgb[y_s:y_e, x_s:x_e]
+                        
                         if block.size > 0:
+                            # 建立標準 16x16 畫布防止拉伸
                             canvas = np.zeros((16, 16, 3), dtype=np.uint8)
                             canvas[:block.shape[0], :block.shape[1]] = block
+                            
                             with ui_cols[ui_idx]:
                                 st.caption(f"📍 R{r+1}-C{c+1}")
                                 st.image(apply_studs(canvas, 12), use_container_width=True)
+                        
                         if ui_idx == 3 and c < cols - 1:
-                            ui_cols = st.columns(4)
-                    st.divider()
+                            ui_cols = st.columns(4) # 換行顯示
 
         with s_col:
-            st.subheader("📊 零件統計")
+            st.subheader("📊 零件清單")
             flat_pixels = lego_rgb.reshape(-1, 3)
             tree = KDTree(pal_rgbs)
             _, idxs = tree.query(flat_pixels)
@@ -161,6 +160,7 @@ def main():
             df = pd.DataFrame(counts.items(), columns=["顏色", "數量"]).sort_values("數量", ascending=False)
             st.table(df)
             st.metric("總片數", f"{len(idxs)} pcs")
+            st.download_button("📥 下載 CSV", df.to_csv(index=False).encode('utf-8-sig'), "lego_list.csv")
 
 if __name__ == "__main__":
     main()
