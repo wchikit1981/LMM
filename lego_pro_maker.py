@@ -7,7 +7,7 @@ from skimage import color
 import cv2
 from collections import Counter
 
-# --- 1. 完整色庫與大師風格定義 ---
+# --- 1. 大師色盤與風格 ---
 FULL_PALETTE = {
     "White": (255, 255, 255), "Black": (0, 0, 0), "Light Grey": (159, 161, 158),
     "Dark Grey": (100, 100, 100), "Red": (180, 0, 0), "Blue": (30, 90, 168),
@@ -17,109 +17,150 @@ FULL_PALETTE = {
 }
 
 MASTER_STYLES = {
-    "全色域 (Full Palette)": list(FULL_PALETTE.keys()),
-    "梵谷星夜 (Impressionist)": ["Blue", "Cyan", "Yellow", "Lime", "Dark Grey", "Black"],
-    "波普藝術 (Pop Art)": ["Red", "Blue", "Yellow", "Pink", "Cyan", "White"],
-    "大師黑白 (B&W Gallery)": ["White", "Black", "Light Grey", "Dark Grey"],
-    "復古暖調 (Retro Warm)": ["Brown", "Tan", "Orange", "Yellow", "Dark Grey", "White"]
+    "全色域 (Full)": list(FULL_PALETTE.keys()),
+    "梵谷 (Impressionist)": ["Blue", "Cyan", "Yellow", "Lime", "Dark Grey", "Black"],
+    "波普 (Pop Art)": ["Red", "Blue", "Yellow", "Pink", "Cyan", "White"],
+    "黑白 (B&W Gallery)": ["White", "Black", "Light Grey", "Dark Grey"],
+    "復古 (Retro)": ["Brown", "Tan", "Orange", "Yellow", "Dark Grey", "White"]
 }
 
-# --- 2. 核心影像處理函數 ---
+# --- 2. 影像處理核心 ---
 
-def apply_studs_effect(img_np, scale=12):
-    """渲染立體 Studs (凸點) 紋理濾鏡"""
+def super_sharpen(img_np):
+    img_cv = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+    kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+    img_cv = cv2.filter2D(img_cv, -1, kernel)
+    lab = cv2.cvtColor(img_cv, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(4,4))
+    l = clahe.apply(l)
+    img_cv = cv2.cvtColor(cv2.merge((l,a,b)), cv2.COLOR_LAB2BGR)
+    return cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
+
+def apply_dithering(img_np, palette_rgbs):
     h, w, _ = img_np.shape
-    base_img = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-    scaled = cv2.resize(base_img, (w * scale, h * scale), interpolation=cv2.INTER_NEAREST)
+    img_f = img_np.astype(float) / 255.0
+    pal_f = palette_rgbs.astype(float) / 255.0
+    tree = KDTree(pal_f)
+    for y in range(h):
+        for x in range(w):
+            old_val = img_f[y, x].copy()
+            _, idx = tree.query(old_val)
+            new_val = pal_f[idx]
+            img_f[y, x] = new_val
+            err = old_val - new_val
+            if x + 1 < w: img_f[y, x+1] += err * 7/16
+            if y + 1 < h:
+                if x > 0: img_f[y+1, x-1] += err * 3/16
+                img_f[y+1, x] += err * 5/16
+                if x + 1 < w: img_f[y+1, x+1] += err * 1/16
+    return (np.clip(img_f, 0, 1) * 255).astype(np.uint8)
+
+def apply_studs(img_np, scale=12):
+    h, w, _ = img_np.shape
+    scaled = cv2.resize(cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR), (w*scale, h*scale), interpolation=cv2.INTER_NEAREST)
     stud = np.full((scale, scale), 160, dtype=np.uint8)
-    cv2.circle(stud, (scale//2, scale//2), int(scale*0.38), 235, -1)
-    cv2.circle(stud, (scale//2, scale//2), int(scale*0.38), 80, 1)
+    cv2.circle(stud, (scale//2, scale//2), int(scale*0.35), 235, -1)
+    cv2.circle(stud, (scale//2, scale//2), int(scale*0.35), 80, 1)
     texture = np.tile(stud, (h, w))
     texture = cv2.merge([texture]*3).astype(float) / 255.0
-    result = (scaled.astype(float) / 255.0) * texture * 1.45
-    return cv2.cvtColor(np.clip(result * 255, 0, 255).astype(np.uint8), cv2.COLOR_BGR2RGB)
-
-def process_mosaic(img_pil, grid_w, grid_h, brightness, contrast, palette_dict):
-    """執行縮放、色彩調整與 CIELAB 配色"""
-    img = ImageEnhance.Brightness(img_pil).enhance(brightness)
-    img = ImageEnhance.Contrast(img).enhance(contrast)
-    img_small = img.resize((grid_w, grid_h), Image.LANCZOS)
-    img_np = np.array(img_small)
-    
-    p_names = list(palette_dict.keys())
-    p_rgbs = np.array(list(palette_dict.values())) / 255.0
-    p_lab = color.rgb2lab(p_rgbs.reshape(-1, 1, 3)).reshape(-1, 3)
-    img_lab = color.rgb2lab(img_np / 255.0)
-    
-    tree = KDTree(p_lab)
-    _, indices = tree.query(img_lab)
-    lego_rgb = (p_rgbs[indices] * 255).astype(np.uint8).reshape(grid_h, grid_w, 3)
-    used_colors = [p_names[i] for i in indices.flatten()]
-    return lego_rgb, used_colors, img_np
+    res = (scaled.astype(float) / 255.0) * texture * 1.5
+    return cv2.cvtColor(np.clip(res * 255, 0, 255).astype(np.uint8), cv2.COLOR_BGR2RGB)
 
 # --- 3. Streamlit 介面 ---
 
 def main():
-    st.set_page_config(layout="wide", page_title="Ultimate Lego Master")
-    st.title("🧱 Ultimate LEGO® Master Studio")
+    st.set_page_config(layout="wide", page_title="LEGO Design Master")
+    st.title("🧱 LEGO® Design Master: 終極修正版")
 
     with st.sidebar:
         st.header("📏 尺寸與照片")
         file = st.file_uploader("上傳照片", type=["jpg", "png", "jpeg"])
-        col_w, col_h = st.columns(2)
-        grid_w = col_w.number_input("闊度 (寬)", 8, 500, 48)
-        grid_h = col_h.number_input("長度 (高)", 8, 500, 48)
-        st.info(f"📏 實體尺寸: {grid_w*0.8:.1f} x {grid_h*0.8:.1f} cm")
+        c_w, c_h = st.columns(2)
+        grid_w = c_w.number_input("闊度 (Studs)", 8, 400, 64)
+        grid_h = c_h.number_input("長度 (Studs)", 8, 400, 64)
         
         st.divider()
-        st.header("🎨 風格與配色")
-        style_choice = st.selectbox("選擇大師配色風格", list(MASTER_STYLES.keys()))
-        selected_colors = MASTER_STYLES[style_choice]
-        current_pal = {name: FULL_PALETTE[name] for name in selected_colors}
+        st.header("🎨 風格與銳化")
+        style_name = st.selectbox("配色風格", list(MASTER_STYLES.keys()))
+        use_dither = st.toggle("開啟抖動 (Dithering)", value=True)
+        use_sharp = st.toggle("開啟強效銳化", value=True)
+        auto_zoom = st.checkbox("自動聚焦中心", value=True)
         
         st.divider()
-        st.header("⚙️ 進階控制")
-        bright = st.slider("亮度", 0.5, 2.0, 1.0)
-        cont = st.slider("對比", 0.5, 2.0, 1.1)
-        use_studs = st.toggle("顯示顆粒質感 (Studs)", value=True)
-        show_guide = st.checkbox("生成分區說明書 (16x16)", value=False)
+        bright = st.slider("亮度", 0.5, 2.0, 1.1)
+        cont = st.slider("對比", 0.5, 2.5, 1.4)
+        show_guide = st.checkbox("展開分區說明書 (16x16)", value=False)
 
     if file:
         raw_img = Image.open(file).convert("RGB")
-        lego_rgb, used_colors, small_np = process_mosaic(raw_img, grid_w, grid_h, bright, cont, current_pal)
+        if auto_zoom:
+            w_o, h_o = raw_img.size
+            sz = min(w_o, h_o)
+            raw_img = raw_img.crop(((w_o-sz)/2, (h_o-sz)/2, (w_o+sz)/2, (h_o+sz)/2))
+
+        img_p = ImageEnhance.Brightness(raw_img).enhance(bright)
+        img_p = ImageEnhance.Contrast(img_p).enhance(cont)
+        img_small = img_p.resize((grid_w, grid_h), Image.LANCZOS)
+        img_np = np.array(img_small)
         
-        m_col1, m_col2 = st.columns([3, 1])
+        if use_sharp: img_np = super_sharpen(img_np)
         
-        with m_col1:
-            st.subheader(f"🖼️ 渲染預覽 - {style_choice}")
-            if use_studs:
-                render_img = apply_studs_effect(lego_rgb)
-            else:
-                render_img = Image.fromarray(lego_rgb).resize((grid_w*10, grid_h*10), Image.NEAREST)
-            st.image(render_img, use_column_width=True)
+        pal_names = MASTER_STYLES[style_name]
+        pal_rgbs = np.array([FULL_PALETTE[n] for n in pal_names])
+        
+        if use_dither:
+            lego_rgb = apply_dithering(img_np, pal_rgbs)
+        else:
+            p_lab = color.rgb2lab(pal_rgbs.reshape(-1, 1, 3) / 255.0).reshape(-1, 3)
+            img_lab = color.rgb2lab(img_np / 255.0)
+            _, idxs = KDTree(p_lab).query(img_lab)
+            lego_rgb = pal_rgbs[idxs].astype(np.uint8).reshape(grid_h, grid_w, 3)
+
+        # 顯示預覽
+        m_col, s_col = st.columns([3, 1])
+        with m_col:
+            st.subheader("🖼️ 渲染成品預覽")
+            st.image(apply_studs(lego_rgb, 12), use_container_width=True)
             
+            # --- 分區修正邏輯 ---
             if show_guide:
                 st.divider()
-                st.subheader("📖 16x16 分區拼裝圖紙")
-                r_num = (grid_h // 16) + (1 if grid_h % 16 != 0 else 0)
-                c_num = (grid_w // 16) + (1 if grid_w % 16 != 0 else 0)
-                for r in range(r_num):
-                    cols = st.columns(min(c_num, 4))
-                    for c in range(len(cols)):
-                        block = lego_rgb[r*16:(r+1)*16, c*16:(c+1)*16]
+                st.subheader("📖 16x16 比例修正分區圖")
+                rows = (grid_h + 15) // 16
+                cols = (grid_w + 15) // 16
+                
+                for r in range(rows):
+                    st.write(f"第 {r+1} 排區塊")
+                    ui_cols = st.columns(4)
+                    for c in range(cols):
+                        ui_idx = c % 4
+                        y_s, y_e = r*16, min((r+1)*16, grid_h)
+                        x_s, x_e = c*16, min((c+1)*16, grid_w)
+                        block = lego_rgb[y_s:y_e, x_s:x_e]
+                        
                         if block.size > 0:
-                            with cols[c]:
-                                st.caption(f"區塊 R{r+1}-C{c+1}")
-                                st.image(apply_studs_effect(block, scale=10))
+                            # 建立標準 16x16 畫布防止拉伸
+                            canvas = np.zeros((16, 16, 3), dtype=np.uint8)
+                            canvas[:block.shape[0], :block.shape[1]] = block
+                            
+                            with ui_cols[ui_idx]:
+                                st.caption(f"📍 R{r+1}-C{c+1}")
+                                st.image(apply_studs(canvas, 12), use_container_width=True)
+                        
+                        if ui_idx == 3 and c < cols - 1:
+                            ui_cols = st.columns(4) # 換行顯示
 
-        with m_col2:
-            st.subheader("📊 零件統計清單")
-            counts = Counter(used_colors)
+        with s_col:
+            st.subheader("📊 零件清單")
+            flat_pixels = lego_rgb.reshape(-1, 3)
+            tree = KDTree(pal_rgbs)
+            _, idxs = tree.query(flat_pixels)
+            counts = Counter([pal_names[i] for i in idxs])
             df = pd.DataFrame(counts.items(), columns=["顏色", "數量"]).sort_values("數量", ascending=False)
             st.table(df)
-            st.metric("總零件數", f"{sum(counts.values())} pcs")
-            csv = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 下載清單 CSV", csv, "lego_parts.csv", "text/csv")
+            st.metric("總片數", f"{len(idxs)} pcs")
+            st.download_button("📥 下載 CSV", df.to_csv(index=False).encode('utf-8-sig'), "lego_list.csv")
 
 if __name__ == "__main__":
     main()
