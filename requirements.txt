@@ -3,5 +3,5 @@ numpy
 pandas
 pillow
 scikit-image
-opencv-python
+opencv-python-headless
 scipy
