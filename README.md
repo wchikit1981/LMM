@@ -1,2 +1,22 @@
-# LMM Lego Mosaic Maker
-pip install streamlit numpy pandas pillow scikit-image opencv-python scipy
+# 🧱 Lego Pro Master Studio
+
+這是一個基於 Python 與 Streamlit 開發的專業級樂高馬賽克拼圖 (Lego Mosaic) 設計工具。它能將任何照片轉換為擬真的樂高積木設計圖，並提供詳細的零件清單與分區拼裝說明。
+
+## ✨ 核心功能
+
+* **自由尺寸設定**：支援長、闊 (Studs) 獨立設定，不受原圖比例限制。
+* **專業色彩匹配**：採用 CIELAB 色彩空間演算法，確保積木顏色最接近原圖視覺感官。
+* **擬真 3D 渲染**：自動為預覽圖加上立體凸點 (Studs) 紋理與光影效果。
+* **分區說明書**：將大尺寸拼圖自動拆解為 16x16 的標準底板區塊，方便實際拼裝。
+* **3D 浮雕層次**：可計算亮度分層，建議在高光處堆疊厚度，增加實體立體感。
+* **自動零件統計**：即時生成零件顏色與數量清單，支援導出為 CSV。
+
+## 🛠️ 安裝步驟
+
+1. **複製專案**：
+   將 `lego_master_pro.py` 和 `requirements.txt` 放在同一個資料夾下。
+
+2. **安裝依賴套件**：
+   在終端機執行以下指令：
+   ```bash
+   pip install -r requirements.txt
